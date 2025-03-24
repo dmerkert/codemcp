@@ -1,3 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+build = [
+  "uv>=0.6.8",
+  "hatchling>=1.27.0",
+  'auditwheel>=6.3.0 ; platform_system == "Linux"'
+]
+dev = [
+  "pytest>=7.0.0",
+  "black>=23.0.0",
+  "mypy>=1.0.0",
+  "expecttest>=0.1.4",
+  "ruff>=0.1.5",
+  "pyright>=1.1.350",
+  "tomli_w>=1.0.0"
+]
+
 [project]
 name = "codemcp"
 version = "0.4.0"
@@ -6,69 +26,19 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
 dependencies = [
-    "mcp[cli]>=1.2.0",
-    "ruff>=0.9.10",
-    "toml>=0.10.2",
-    "tomli>=2.1.1",
-    "anyio>=3.7.0",
-    "pyyaml>=6.0.0",
-    "pytest-xdist>=3.6.1",
-    "editorconfig>=0.17.0",
-]
-
-[dependency-groups]
-build = [
-    "uv>=0.6.8",
-    "hatchling>=1.27.0",
-    'auditwheel>=6.3.0 ; platform_system == "Linux"'
-]
-dev = [
-    "pytest>=7.0.0",
-    "black>=23.0.0",
-    "mypy>=1.0.0",
-    "expecttest>=0.1.4",
-    "ruff>=0.1.5",
-    "pyright>=1.1.350",
-    "tomli_w>=1.0.0",
+  "mcp[cli]>=1.2.0",
+  "ruff>=0.9.10",
+  "toml>=0.10.2",
+  "tomli>=2.1.1",
+  "anyio>=3.7.0",
+  "pyyaml>=6.0.0",
+  "pytest-xdist>=3.6.1",
+  "editorconfig>=0.17.0"
 ]
 
 [project.scripts]
 codemcp = "codemcp:run"
 codemcp-multi = "codemcp.multi_entry:main"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.uv]
-# uv-specific settings can go here
-
-[tool.ruff]
-# Enable the formatter
-target-version = "py312"
-line-length = 88
-indent-width = 4
-
-# Enabled linters
-[tool.ruff.lint]
-select = ["ASYNC"]
-
-# Exclude test files from ASYNC lints
-[tool.ruff.lint.per-file-ignores]
-"test/**/*.py" = ["ASYNC"]
-"e2e/*.py" = ["ASYNC"]
-
-[tool.ruff.format]
-# Formatter settings
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
-
-[tool.pytest.ini_options]
-# Pytest configuration
-testpaths = ["tests", "e2e"]
-addopts = "-n auto --tb=native"
 
 [tool.pyright]
 # Pyright configuration with strict settings
@@ -89,3 +59,32 @@ reportPrivateImportUsage = true
 reportUntypedFunctionDecorator = true
 reportFunctionMemberAccess = true
 reportIncompatibleMethodOverride = true
+
+[tool.pytest.ini_options]
+# Pytest configuration
+testpaths = ["tests", "e2e"]
+addopts = "-n auto --tb=native"
+
+[tool.ruff]
+# Enable the formatter
+target-version = "py312"
+line-length = 88
+indent-width = 4
+
+[tool.ruff.format]
+# Formatter settings
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# Enabled linters
+[tool.ruff.lint]
+select = ["ASYNC"]
+
+# Exclude test files from ASYNC lints
+[tool.ruff.lint.per-file-ignores]
+"test/**/*.py" = ["ASYNC"]
+"e2e/*.py" = ["ASYNC"]
+
+[tool.uv]

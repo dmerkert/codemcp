@@ -1,12 +1,10 @@
 name: test
-
 on:
   pull_request:
   push:
     branches:
       - main
       - prod
-
 jobs:
   test:
     runs-on: ubuntu-latest

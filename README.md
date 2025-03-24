@@ -14,13 +14,13 @@ Cursor, Cline, Aider), but it occupies a unique point in the design space:
    offering.  **Say goodbye to giant API bills**.  (Say hello to time-based rate
    limits.)
 
-2. It's built around **safe agentic AI** by providing a limited set of tools
+1. It's built around **safe agentic AI** by providing a limited set of tools
    that helpful, honest and harmless LLMs are unlikely to misuse, and enforcing
    best practices like use of Git version control to ensure all code changes
    can be rolled back.  As a result, you can safely **unleash the AI** and
    only evaluate at the end if you want to accept the changes or not.
 
-3. It's **IDE agnostic**: you ask Claude to make changes, it makes them, and
+1. It's **IDE agnostic**: you ask Claude to make changes, it makes them, and
    then you can use your favorite IDE setup to review the changes and make
    further edits.
 
@@ -67,7 +67,8 @@ codemcp version, assuming your global Python install is recent enough (Python
 users report this is easier to get working on Windows.
 
 1. `pip install git+https://github.com/ezyang/codemcp@prod`
-2. Add the following configuration to `claude_desktop_config.json` file
+1. Add the following configuration to `claude_desktop_config.json` file
+
 ```json
 {
     "mcpServers": {
@@ -78,6 +79,7 @@ users report this is easier to get working on Windows.
     }
 }
 ```
+
 3. Restart Claude Desktop
 
 You will need to manually upgrade codemcp to take updates using

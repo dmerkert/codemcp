@@ -8,7 +8,7 @@ So if you want to contribute a patch, here's what I'll accept:
 
 1. A small patch that I can easily review it by hand, or
 
-2. A *prompt* you used to generate the output by LLM, and evidence that you manually
+1. A *prompt* you used to generate the output by LLM, and evidence that you manually
    tested the result and it worked.
 
 You can feel free to submit the code that the LLM generated too but for safety
@@ -38,6 +38,5 @@ and connect using:
 ```
 
 I recommend using `git worktree` to keep a separate "prod" folder from the
-folder you're actually editing with Claude.  You can then `git checkout
---detach main` in the prod folder to checkout your latest changes and manually
+folder you're actually editing with Claude.  You can then `git checkout --detach main` in the prod folder to checkout your latest changes and manually
 test them.

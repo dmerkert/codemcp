@@ -26,13 +26,14 @@ format = ["./run_format.sh"]
 ```
 
 Currently supported commands:
+
 - `format`: Used by the Format tool to format code according to project standards.
 
 ## Tools
 
 codemcp provides several tools that Claude can use during interaction:
 
-- **ReadFile**: Read a file from the filesystem 
+- **ReadFile**: Read a file from the filesystem
 - **WriteFile**: Write content to a file
 - **EditFile**: Make targeted edits to a file
 - **LS**: List files and directories
@@ -45,7 +46,7 @@ codemcp provides several tools that Claude can use during interaction:
 When a project is initialized using `InitProject`, codemcp reads the `codemcp.toml` file and constructs a system prompt that includes:
 
 1. Default system instructions
-2. The project's `project_prompt`
-3. Instructions to use specific tools at appropriate times
+1. The project's `project_prompt`
+1. Instructions to use specific tools at appropriate times
 
 For example, if a format command is configured, the system prompt will include an instruction for Claude to use the Format tool when the task is complete.
