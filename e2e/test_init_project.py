@@ -381,4 +381,5 @@ test = ["./run_test.sh"]
 
 
 if __name__ == "__main__":
+    # Run the tests
     unittest.main()

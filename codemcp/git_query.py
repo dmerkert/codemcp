@@ -15,6 +15,7 @@ __all__ = [
     "is_git_repository",
     "get_ref_commit_chat_id",
     "find_git_root",
+    "get_current_commit_hash",
 ]
 
 log = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ async def get_head_commit_message(directory: str) -> str:
         text=True,
     )
 
-    return result.stdout.strip()
+    return str(result.stdout.strip())
 
 
 async def get_head_commit_hash(directory: str, short: bool = True) -> str:
@@ -73,7 +74,7 @@ async def get_head_commit_hash(directory: str, short: bool = True) -> str:
         text=True,
     )
 
-    return result.stdout.strip()
+    return str(result.stdout.strip())
 
 
 async def get_head_commit_chat_id(directory: str) -> str | None:
@@ -150,7 +151,7 @@ async def get_repository_root(path: str) -> str:
         text=True,
     )
 
-    return result.stdout.strip()
+    return str(result.stdout.strip())
 
 
 async def is_git_repository(path: str) -> bool:
@@ -207,7 +208,7 @@ async def get_ref_commit_chat_id(directory: str, ref_name: str) -> str | None:
             capture_output=True,
             text=True,
         )
-        commit_message = message_result.stdout.strip()
+        commit_message = str(message_result.stdout.strip())
 
         # Use regex to find the last occurrence of codemcp-id: XXX
         # The pattern looks for "codemcp-id: " followed by any characters up to a newline or end of string
@@ -246,3 +247,53 @@ def find_git_root(start_path: str) -> str | None:
         path = parent
 
     return None
+
+
+async def get_current_commit_hash(path: str, short: bool = True) -> str | None:
+    """Get the current commit hash for the repository.
+
+    This function is similar to get_head_commit_hash but designed to be used
+    after operations to report the latest commit hash.
+
+    Args:
+        path: The file or directory path to check (if a file path is provided,
+              the directory containing the file will be used)
+        short: Whether to get short hash (default) or full hash
+
+    Returns:
+        The current commit hash if available, None otherwise
+
+    Note:
+        This function safely returns None if there are any issues getting the hash,
+        rather than raising exceptions.
+    """
+    try:
+        # Handle both file and directory paths by getting the appropriate directory
+        abs_path = os.path.abspath(path)
+        directory = os.path.dirname(abs_path) if os.path.isfile(abs_path) else abs_path
+
+        if not await is_git_repository(directory):
+            return None
+
+        # Get the commit hash (short or full)
+        cmd = ["git", "rev-parse"]
+        if short:
+            cmd.append("--short")
+        cmd.append("HEAD")
+
+        result = await run_command(
+            cmd,
+            cwd=directory,
+            check=False,  # Don't raise exception if command fails
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode == 0:
+            return str(result.stdout.strip())
+        return None
+    except Exception as e:
+        logging.warning(
+            f"Exception when getting current commit hash: {e!s}", exc_info=True
+        )
+        return None

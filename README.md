@@ -10,101 +10,80 @@ run tests.  Say goodbye to copying code in and out of Claude's chat window!
 codemcp offers similar functionality to other AI coding software (Claude Code,
 Cursor, Cline, Aider), but it occupies a unique point in the design space:
 
-1. It's intended to be used with Claude Pro, Anthropic's $20/mo subscription
-   offering.  **Say goodbye to giant API bills**.  (Say hello to time-based rate
-   limits.)
+1. It's intended to be used with **Claude Pro**, Anthropic's $20/mo
+   subscription offering.  I like paying for my usage with a subscription plan
+   because it means **zero marginal cost** for agent actions; no more feeling
+   bad that you wasted five bucks on a changeset that doesn't work.
 
-1. It's built around **safe agentic AI** by providing a limited set of tools
-   that helpful, honest and harmless LLMs are unlikely to misuse, and enforcing
-   best practices like use of Git version control to ensure all code changes
-   can be rolled back.  As a result, you can safely **unleash the AI** and
-   only evaluate at the end if you want to accept the changes or not.
+   Note that if you have Claude Max ($100/mo), Claude Code can also be used
+   with subscription based pricing.  The value proposition for codemcp is
+   murkier in this case (and it is definitely inferior to Claude Code in some
+   respects), but you can still use codemcp with Claude Max if you prefer some
+   of the other UI decisions it makes.  (Also, it's open source, so you can
+   change it if you don't like it, unlike Claude Code!)
+
+2. It's built around **auto-accept by default**.  I want my agent to get as
+   far as it can without my supervision, so I can review everything in one go at
+   the end.  There are two key things that codemcp does differently than most
+   coding agents: we **forbid unrestricted shell**, instead requiring you to
+   predeclare commands the agent can use in ``codemcp.toml``, and we **Git
+   version all LLM edits**, so you can roll back agent changes on a
+   fine-grained basis and don't have to worry about forgetting to commit
+   changes.
 
 1. It's **IDE agnostic**: you ask Claude to make changes, it makes them, and
    then you can use your favorite IDE setup to review the changes and make
-   further edits.
+   further edits.  I use vim as my daily driver editor, and coding environments
+   that require VSCode or a specific editor are a turn off for me.
 
-## Getting started
+## IMPORTANT: For master users - Major changes for token efficiency
 
-First, [install uv](https://docs.astral.sh/uv/getting-started/installation/)
-and [install
-git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git), if they
-are not installed already (on Windows, if you installed Git, I recommend
-rebooting).
+To improve codemcp's token efficiency, on master I am in the process of
+changing codemcp back into a multi-tool tool (instead of a single tool whose
+instructions are blatted into chat when you InitProject).  This means you have
+to manually approve tool use.  Because tool use approval is persistent across
+multiple chats, I think this is a reasonable tradeoff to make, but if you
+really don't like, file a bug at
+[refined-claude](https://github.com/ezyang/refined-claude/issues) browser
+extension for supporting auto-approve tool use.
 
-Then, in `claude_desktop_config.json`:
+## Installation
 
-```json
-{
-  "mcpServers": {
-    "codemcp": {
-      "command": "/Users/<username>/.local/bin/uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/ezyang/codemcp@prod",
-        "codemcp"
-      ]
-    }
-  }
-}
-```
+I recommend this specific way of installing and using codemcp:
 
-On Windows, double backslashes are necessary for the path:
+1. Install `uv` and install git, if they are not installed already.
 
-```
-C:\\Users\\<username>\\.local\\bin\\uvx.exe
-```
+2. Install [claude-mcp](https://chromewebstore.google.com/detail/mcp-for-claudeai/jbdhaamjibfahpekpnjeikanebpdpfpb) on your browser.
+   This enables you to connect to SSE MCP servers directly from the website,
+   which means you don't need to use Claude Desktop and can easily have
+   multiple chat windows going in parallel.  We expect this extension should
+   be soon obsoleted by the rollout of
+   [Integrations](https://www.anthropic.com/news/integrations).  At time of
+   writing, however, Integrations have not yet arrived for Claude Pro subscribers.
 
-Restart the Claude Desktop app after modifying the JSON.  If the MCP
-successfully loaded, a hammer icon will appear and when you click it "codemcp"
-will be visible.
+3. Run codemcp using ``uvx --from git+https://github.com/ezyang/codemcp@prod codemcp serve``.
+   You can add ``--port 1234`` if you need it to listen on a non-standard port.
 
-### Global install with pip
+   Pro tip: if you like to live dangerously, you can change `prod` to `main`.  If
+   you want to pin to a specific release, replace it with `0.3.0` or similar.
 
-If you don't want to use uv, you can also globally pip install the latest
-codemcp version, assuming your global Python install is recent enough (Python
-3.12) and doesn't have Python dependencies that conflict with codemcp.  Some
-users report this is easier to get working on Windows.
+   Pro tip: you can run codemcp remotely!  If you use
+   [Tailscale](https://tailscale.com/) and trust all devices on your Tailnet,
+   you can do this securely by passing ``--host 100.101.102.103`` (replace the
+   IP with the Tailscale IP address of your node.  This IP typically lives in
+   the 100.64.0.0/10 range.)  **WARNING:** Anyone with access to this MCP can perform
+   arbitrary code execution on your computer, it is **EXTREMELY** unlikely you want to
+   bind to 0.0.0.0.
 
-1. `pip install git+https://github.com/ezyang/codemcp@prod`
-1. Add the following configuration to `claude_desktop_config.json` file
+4. Configure claude-mcp with URL: ``http://127.0.0.1:8000/sse`` (replace the port if needed.)
 
-```json
-{
-    "mcpServers": {
-         "codemcp": {
-               "command": "python",
-               "args": ["-m", "codemcp"]
-            }
-    }
-}
-```
+5. Unfortunately, the web UI inconsistently displays the hammer icon.  However, you can verify
+   that the MCP server is working by looking for "[MCP codemcp] SSE connection opened" in the
+   Console, or by asking Claude what tools it has available (it should say
+   tools from codemcp are available.)
 
-3. Restart Claude Desktop
-
-You will need to manually upgrade codemcp to take updates using
-`pip install --upgrade git+https://github.com/ezyang/codemcp@prod`
-
-### Other tips
-
-Pro tip: If the server fails to load, go to Settings > Developer > codemcp >
-Logs to look at the MCP logs, they're very helpful for debugging. The logs on
-Windows should be loaded `C:\Users\<user_name>\AppData\Roaming\Claude\logs`
-(replace `<user_name>` with your username.
-
-Pro tip: if on Windows, the logs say "Git executable not found. Ensure that
-Git is installed and available", and you *just* installed Git, reboot your
-machine (the PATH update hasn't propagated.)  If this still doesn't work, open
-System Properties > Environment Variables > System variables > Path and ensure
-there is an entry for Git.
-
-Pro tip: if you like to live dangerously, you can change `prod` to `main`.  If
-you want to pin to a specific release, replace it with `0.3.0` or similar.
-
-Pro tip: it is supported to specify only `uvx` as the command, but uvx must be
-in your global PATH (not just added via a shell profile); on OS X, this is
-typically not the case if you used the self installer (unless you installed
-into a system location like `/usr/local/bin`).
+If you prefer to use Claude Desktop or have unusual needs, check out [INSTALL.md](INSTALL.md) for
+installation instructions for a variety of non-standard situations.
 
 ## Usage
 
@@ -118,6 +97,8 @@ environment they need):
 format = ["./run_format.sh"]
 test = ["./run_test.sh"]
 ```
+
+The ``format`` command is special; it is always run after every file edit.
 
 Next, in Claude Desktop, we recommend creating a Project and putting this in
 the Project Instructions:

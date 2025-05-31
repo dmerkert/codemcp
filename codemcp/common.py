@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+from typing import List, Union
 
 # Constants
 MAX_LINES_TO_READ = 1000
@@ -34,10 +35,16 @@ def get_image_format(file_path: str) -> str:
 
 
 def normalize_file_path(file_path: str) -> str:
-    """Normalize a file path to an absolute path."""
-    if not os.path.isabs(file_path):
-        return os.path.abspath(os.path.join(os.getcwd(), file_path))
-    return os.path.abspath(file_path)
+    """Normalize a file path to an absolute path.
+
+    Expands the tilde character (~) if present to the user's home directory.
+    """
+    # Expand tilde to home directory
+    expanded_path = os.path.expanduser(file_path)
+
+    if not os.path.isabs(expanded_path):
+        return os.path.abspath(os.path.join(os.getcwd(), expanded_path))
+    return os.path.abspath(expanded_path)
 
 
 def get_edit_snippet(
@@ -78,7 +85,7 @@ def get_edit_snippet(
     snippet_lines = edited_lines[start_line:end_line]
 
     # Format with line numbers
-    result = []
+    result: List[str] = []
     for i, line in enumerate(snippet_lines):
         line_num = start_line + i + 1
         result.append(f"{line_num:4d} | {line}")
@@ -86,7 +93,9 @@ def get_edit_snippet(
     return "\n".join(result)
 
 
-def truncate_output_content(content: str, prefer_end: bool = True) -> str:
+def truncate_output_content(
+    content: Union[str, bytes, None], prefer_end: bool = True
+) -> str:
     """Truncate command output content to a reasonable size.
 
     When prefer_end is True, this function prioritizes keeping content from the end
@@ -100,8 +109,17 @@ def truncate_output_content(content: str, prefer_end: bool = True) -> str:
     Returns:
         The truncated content with appropriate indicators
     """
+    if content is None:
+        return ""
     if not content:
-        return content
+        return str(content)
+
+    # Convert bytes to str if needed
+    if isinstance(content, bytes):
+        try:
+            content = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return "[Binary content cannot be displayed]"
 
     lines = content.splitlines()
     total_lines = len(lines)
@@ -109,7 +127,7 @@ def truncate_output_content(content: str, prefer_end: bool = True) -> str:
     # If number of lines is within the limit, check individual line lengths
     if total_lines <= MAX_LINES_TO_READ:
         # Process line lengths
-        processed_lines = []
+        processed_lines: List[str] = []
         for line in lines:
             if len(line) > MAX_LINE_LENGTH:
                 processed_lines.append(line[:MAX_LINE_LENGTH] + "... (line truncated)")

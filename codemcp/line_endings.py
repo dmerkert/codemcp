@@ -10,7 +10,7 @@ from typing import Literal, Optional
 import tomli
 from editorconfig import get_properties
 
-from .glob import match as glob_match
+from .glob_pattern import match as glob_match
 
 __all__ = [
     "get_line_ending_preference",
@@ -132,7 +132,9 @@ def check_gitattributes(file_path: str) -> Optional[str]:
 
                     # Use glob.match to check if the pattern matches the file
                     # Git patterns behave like gitignore patterns, so we don't enable editorconfig features
-                    if pattern == "*" or glob_match(pattern, relative_path):
+                    if pattern == "*" or glob_match(
+                        pattern, relative_path, editorconfig=False
+                    ):
                         # Check for text/eol attributes
                         for attr in attrs:
                             if attr == "text=auto":

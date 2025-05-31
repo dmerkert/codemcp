@@ -3,7 +3,7 @@
 import logging
 import os
 import subprocess
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import tomli
 
@@ -15,6 +15,7 @@ __all__ = [
     "get_command_from_config",
     "check_for_changes",
     "run_code_command",
+    "run_formatter_without_commit",
 ]
 
 
@@ -37,15 +38,15 @@ def get_command_from_config(project_dir: str, command_name: str) -> Optional[Lis
             return None
 
         with open(config_path, "rb") as f:
-            config = tomli.load(f)
+            config: Dict[str, Any] = tomli.load(f)
 
         if "commands" in config and command_name in config["commands"]:
             cmd_config = config["commands"][command_name]
             # Handle both direct command lists and dictionaries with 'command' field
             if isinstance(cmd_config, list):
-                return cmd_config
+                return cast(List[str], cmd_config)
             elif isinstance(cmd_config, dict) and "command" in cmd_config:
-                return cmd_config["command"]
+                return cast(List[str], cmd_config["command"])
 
         return None
     except Exception as e:
@@ -92,7 +93,7 @@ async def run_code_command(
     command_name: str,
     command: List[str],
     commit_message: str,
-    chat_id: str = None,
+    chat_id: Optional[str] = None,
 ) -> str:
     """Run a code command (lint, format, etc.) and handle git operations.
 
@@ -131,10 +132,11 @@ async def run_code_command(
         # If it's a git repo, commit any pending changes before running the command
         if is_git_repo:
             logging.info(f"Committing any pending changes before {command_name}")
+            chat_id_str = str(chat_id) if chat_id is not None else ""
             commit_result = await commit_changes(
                 full_dir_path,
                 f"Snapshot before auto-{command_name}",
-                chat_id,
+                chat_id_str,
                 commit_all=True,
             )
             if not commit_result[0]:
@@ -160,8 +162,9 @@ async def run_code_command(
                 has_changes = await check_for_changes(full_dir_path)
                 if has_changes:
                     logging.info(f"Changes detected after {command_name}, committing")
+                    chat_id_str = str(chat_id) if chat_id is not None else ""
                     success, commit_result_message = await commit_changes(
-                        full_dir_path, commit_message, chat_id, commit_all=True
+                        full_dir_path, commit_message, chat_id_str, commit_all=True
                     )
 
                     if success:
@@ -213,3 +216,41 @@ async def run_code_command(
         error_msg = f"Error during {command_name}: {e}"
         logging.error(error_msg)
         return f"Error: {error_msg}"
+
+
+async def run_formatter_without_commit(file_path: str) -> Tuple[bool, str]:
+    """Run the formatter on a specific file without performing pre/post commit operations.
+
+    Args:
+        file_path: Absolute path to the file to format
+
+    Returns:
+        A tuple containing (success_status, message)
+
+    Raises:
+        Propagates any unexpected errors during formatting
+    """
+    # Get the project directory (repository root)
+    project_dir = await get_repository_root(file_path)
+
+    # Get the format command from config - this is the only expected failure mode
+    format_command = get_command_from_config(project_dir, "format")
+    if not format_command:
+        return False, "No format command configured in codemcp.toml"
+
+    # Use relative path from project_dir for the formatting command
+    os.path.relpath(file_path, project_dir)
+
+    # Run the formatter with the specific file path
+    command = format_command
+    result = await run_command(
+        command,
+        cwd=project_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    # If we get here, the formatter ran successfully
+    truncated_stdout = truncate_output_content(result.stdout, prefer_end=True)
+    return True, f"File formatted successfully:\n{truncated_stdout}"

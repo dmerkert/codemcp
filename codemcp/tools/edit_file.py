@@ -7,8 +7,10 @@ import math
 import os
 import re
 from difflib import SequenceMatcher
+from typing import Any, Dict, List, Optional, Tuple
 
-from ..common import get_edit_snippet
+from ..code_command import run_formatter_without_commit
+from ..common import get_edit_snippet, normalize_file_path
 from ..file_utils import (
     async_open_text,
     check_file_path_and_permissions,
@@ -17,13 +19,16 @@ from ..file_utils import (
 )
 from ..git import commit_changes
 from ..line_endings import detect_line_endings
+from ..mcp import mcp
+from .commit_utils import append_commit_hash
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "edit_file_content",
+    "edit_file",
     "find_similar_file",
+    "apply_edit_pure",
 ]
 
 
@@ -37,6 +42,12 @@ def find_similar_file(file_path: str) -> str | None:
         The path to a similar file, or None if none found
 
     """
+    # Import normalize_file_path for tilde expansion
+    from ..common import normalize_file_path
+
+    # Normalize the path with tilde expansion
+    file_path = normalize_file_path(file_path)
+
     # Simple implementation - in a real app, would check for files with different extensions
     directory = os.path.dirname(file_path)
     if not os.path.exists(directory):
@@ -49,35 +60,31 @@ def find_similar_file(file_path: str) -> str | None:
     return None
 
 
-async def apply_edit(
-    file_path: str,
+def apply_edit_pure(
+    content: str,
     old_string: str,
     new_string: str,
-) -> tuple[list[dict], str]:
-    """Apply an edit to a file using robust matching strategies.
+) -> Tuple[List[Dict[str, Any]], str, Optional[str]]:
+    """Apply an edit to content using robust matching strategies.
 
     Args:
-        file_path: The path to the file
+        content: The original content
         old_string: The text to replace
         new_string: The text to replace it with
 
     Returns:
-        A tuple of (patch, updated_file)
+        A tuple of (patch, updated_content, error_message)
+        error_message is None if the edit was successful, otherwise it contains an error message
 
     """
-    if os.path.exists(file_path):
-        content = await async_open_text(file_path, encoding="utf-8")
-    else:
-        content = ""
-
     # For creating a new file, just return the new content
     if not old_string.strip():
         updated_file = new_string
-        old_lines = []
+        old_lines: List[str] = []
         new_lines = new_string.split("\n")
 
         # Create a simple patch structure
-        patch = [
+        result_patch: List[Dict[str, Any]] = [
             {
                 "oldStart": 1,
                 "oldLines": 0,
@@ -87,43 +94,183 @@ async def apply_edit(
             },
         ]
 
-        return patch, updated_file
+        return result_patch, updated_file, None
 
     # First try direct replacement (most common case and efficient)
     if old_string in content:
+        # Check for uniqueness of old_string before applying the replacement
+        # We need to check this to avoid ambiguity in matches
+        if content.count(old_string) > 1:
+            # First try to use the dotdotdots approach which handles multiple matches by context
+            try:
+                test_result = try_dotdotdots(content, old_string, new_string)
+                if test_result:
+                    # If it worked with dotdotdots, we're good to proceed
+                    logger.debug(
+                        "Successfully used dotdotdots strategy to handle multiple occurrences",
+                    )
+                    # Return the result from dotdotdots
+                    updated_file = test_result
+
+                    # Create a useful diff/patch structure for dotdotdots result
+                    dotdot_patch: List[Dict[str, Any]] = []
+                    if (
+                        content != updated_file
+                    ):  # Only create a patch if there were actual changes
+                        old_lines = old_string.split("\n")
+                        new_lines = new_string.split("\n")
+
+                        # Try to find the line number where the change occurs
+                        try:
+                            # This is a simplification; for exact matches this works,
+                            # but for fuzzy matches we would need a more sophisticated approach
+                            before_text = content.split(old_string)[0]
+                            line_num = before_text.count("\n")
+                        except Exception:
+                            # Fallback: just say it's at the start of the file
+                            line_num = 0
+
+                        dotdot_patch.append(
+                            {
+                                "oldStart": line_num + 1,
+                                "oldLines": len(old_lines),
+                                "newStart": line_num + 1,
+                                "newLines": len(new_lines),
+                                "lines": [f"-{line}" for line in old_lines]
+                                + [f"+{line}" for line in new_lines],
+                            },
+                        )
+
+                    return dotdot_patch, updated_file, None
+                else:
+                    # Fall back to the original error message
+                    matches = content.count(old_string)
+                    return (
+                        [],
+                        content,
+                        f"Found {matches} matches of the string to replace. For safety, this tool only supports replacing exactly one occurrence at a time. Add more lines of context to your edit and try again.",
+                    )
+            except ValueError:
+                # If dotdotdots approach failed, give the original error message
+                matches = content.count(old_string)
+                return (
+                    [],
+                    content,
+                    f"Found {matches} matches of the string to replace. For safety, this tool only supports replacing exactly one occurrence at a time. Add more lines of context to your edit and try again.",
+                )
+
+        # If we get here, there's only one occurrence of old_string in content
         updated_file = content.replace(old_string, new_string, 1)
+
+        # Create a useful diff/patch structure
+        diff_patch: List[Dict[str, Any]] = []
+        if content != updated_file:  # Only create a patch if there were actual changes
+            old_lines = old_string.split("\n")
+            new_lines = new_string.split("\n")
+
+            # Try to find the line number where the change occurs
+            try:
+                # This is a simplification; for exact matches this works,
+                # but for fuzzy matches we would need a more sophisticated approach
+                before_text = content.split(old_string)[0]
+                line_num = before_text.count("\n")
+            except Exception:
+                # Fallback: just say it's at the start of the file
+                line_num = 0
+
+            diff_patch.append(
+                {
+                    "oldStart": line_num + 1,
+                    "oldLines": len(old_lines),
+                    "newStart": line_num + 1,
+                    "newLines": len(new_lines),
+                    "lines": [f"-{line}" for line in old_lines]
+                    + [f"+{line}" for line in new_lines],
+                },
+            )
+
+        return diff_patch, updated_file, None
+
+    # Try with trailing whitespace stripped from each line
+    content_lines = content.splitlines()
+    old_lines = old_string.splitlines()
+
+    # Check if we can find a match ignoring trailing whitespace
+    content_lines_stripped = [line.rstrip() for line in content_lines]
+    old_lines_stripped = [line.rstrip() for line in old_lines]
+
+    old_text_stripped = "\n".join(old_lines_stripped)
+    content_stripped = "\n".join(content_lines_stripped)
+
+    if old_text_stripped in content_stripped:
+        # Find the position in the stripped content
+        start_pos = content_stripped.find(old_text_stripped)
+
+        # Count newlines to find the line number
+        line_num = content_stripped[:start_pos].count("\n")
+
+        # Replace those lines with the new content
+        result_lines = (
+            content_lines[:line_num]
+            + new_string.splitlines()
+            + content_lines[line_num + len(old_lines) :]
+        )
+        updated_file = "\n".join(result_lines)
+        if not content.endswith("\n") and updated_file.endswith("\n"):
+            updated_file = updated_file[:-1]
+        elif content.endswith("\n") and not updated_file.endswith("\n"):
+            updated_file += "\n"
+
+        # Create a useful diff/patch structure
+        whitespace_patch: List[Dict[str, Any]] = []
+        if content != updated_file:  # Only create a patch if there were actual changes
+            # Try to find the line number where the change occurs
+            whitespace_patch.append(
+                {
+                    "oldStart": line_num + 1,
+                    "oldLines": len(old_lines),
+                    "newStart": line_num + 1,
+                    "newLines": len(new_string.splitlines()),
+                    "lines": [f"-{line}" for line in old_lines]
+                    + [f"+{line}" for line in new_string.splitlines()],
+                },
+            )
+
+        return whitespace_patch, updated_file, None
     else:
         logger.debug("All matching techniques failed. No changes made.")
-        updated_file = content
+        return [], content, "String to replace not found in file."
 
-    # Create a useful diff/patch structure
-    patch = []
-    if content != updated_file:  # Only create a patch if there were actual changes
-        old_lines = old_string.split("\n")
-        new_lines = new_string.split("\n")
 
-        # Try to find the line number where the change occurs
-        try:
-            # This is a simplification; for exact matches this works,
-            # but for fuzzy matches we would need a more sophisticated approach
-            before_text = content.split(old_string)[0]
-            line_num = before_text.count("\n")
-        except Exception:
-            # Fallback: just say it's at the start of the file
-            line_num = 0
+async def apply_edit(
+    file_path: str,
+    old_string: str,
+    new_string: str,
+) -> Tuple[List[Dict[str, Any]], str, Optional[str]]:
+    """Apply an edit to a file using robust matching strategies.
 
-        patch.append(
-            {
-                "oldStart": line_num + 1,
-                "oldLines": len(old_lines),
-                "newStart": line_num + 1,
-                "newLines": len(new_lines),
-                "lines": [f"-{line}" for line in old_lines]
-                + [f"+{line}" for line in new_lines],
-            },
-        )
+    Args:
+        file_path: The path to the file
+        old_string: The text to replace
+        new_string: The text to replace it with
 
-    return patch, updated_file
+    Returns:
+        A tuple of (patch, updated_file, error_message)
+        error_message is None if the edit was successful, otherwise it contains an error message
+
+    """
+    # Import normalize_file_path for tilde expansion
+    from ..common import normalize_file_path
+
+    # Normalize the path with tilde expansion
+    file_path = normalize_file_path(file_path)
+
+    if os.path.exists(file_path):
+        content = await async_open_text(file_path, encoding="utf-8")
+    else:
+        content = ""
+
+    return apply_edit_pure(content, old_string, new_string)
 
 
 def prep(content: str) -> tuple[str, list[str]]:
@@ -197,7 +344,11 @@ def perfect_replace(
 
     for i in range(len(whole_lines) - part_len + 1):
         whole_tup = tuple(whole_lines[i : i + part_len])
-        if part_tup == whole_tup:
+        whole_tup_stripped = tuple(
+            line.rstrip() for line in whole_lines[i : i + part_len]
+        )
+        part_tup_stripped = tuple(line.rstrip() for line in part_lines)
+        if part_tup == whole_tup or part_tup_stripped == whole_tup_stripped:
             res = whole_lines[:i] + replace_lines + whole_lines[i + part_len :]
             return "".join(res)
 
@@ -322,7 +473,7 @@ def try_dotdotdots(whole: str, part: str, replace: str) -> str | None:
     part_pieces = [part_pieces[i] for i in range(0, len(part_pieces), 2)]
     replace_pieces = [replace_pieces[i] for i in range(0, len(replace_pieces), 2)]
 
-    pairs = zip(part_pieces, replace_pieces, strict=False)
+    pairs = list(zip(part_pieces, replace_pieces))
     for part, replace in pairs:
         if not part and not replace:
             continue
@@ -412,15 +563,20 @@ def find_similar_lines(
         String containing the most similar lines, or empty string if none found
 
     """
-    search_lines = search_lines.splitlines()
-    content_lines = content_lines.splitlines()
+    search_lines_list = search_lines.splitlines()
+    content_lines_list = content_lines.splitlines()
+
+    # Handle empty input cases
+    if not search_lines_list or not content_lines_list:
+        return ""
 
     best_ratio = 0
-    best_match = None
+    best_match: list[str] = []  # Initialize with empty list to avoid None checks
+    best_match_i = 0  # Initialize to avoid unbound variable errors
 
-    for i in range(len(content_lines) - len(search_lines) + 1):
-        chunk = content_lines[i : i + len(search_lines)]
-        ratio = SequenceMatcher(None, search_lines, chunk).ratio()
+    for i in range(len(content_lines_list) - len(search_lines_list) + 1):
+        chunk = content_lines_list[i : i + len(search_lines_list)]
+        ratio = SequenceMatcher(None, search_lines_list, chunk).ratio()
         if ratio > best_ratio:
             best_ratio = ratio
             best_match = chunk
@@ -429,14 +585,19 @@ def find_similar_lines(
     if best_ratio < threshold:
         return ""
 
-    if best_match[0] == search_lines[0] and best_match[-1] == search_lines[-1]:
+    if (
+        best_match[0] == search_lines_list[0]
+        and best_match[-1] == search_lines_list[-1]
+    ):
         return "\n".join(best_match)
 
     N = 5
-    best_match_end = min(len(content_lines), best_match_i + len(search_lines) + N)
+    best_match_end = min(
+        len(content_lines_list), best_match_i + len(search_lines_list) + N
+    )
     best_match_i = max(0, best_match_i - N)
 
-    best = content_lines[best_match_i:best_match_end]
+    best = content_lines_list[best_match_i:best_match_end]
     return "\n".join(best)
 
 
@@ -476,10 +637,22 @@ def replace_most_similar_chunk(whole: str, part: str, replace: str) -> str | Non
     try:
         res = try_dotdotdots(whole, part, replace)
         if res:
-            return res
-    except ValueError as e:
-        logger.debug(f"Dotdotdots matching failed: {e!s}")
-        # continue with other matching strategies
+            # If it worked with dotdotdots, we're good to proceed
+            logger.debug(
+                "Successfully used dotdotdots strategy to handle multiple occurrences",
+            )
+        else:
+            # Fall back to the original error message
+            matches = whole.count(part)
+            raise ValueError(
+                f"Found {matches} matches of the string to replace. For safety, this tool only supports replacing exactly one occurrence at a time. Add more lines of context to your edit and try again."
+            )
+    except ValueError:
+        # If dotdotdots approach failed, give the original error message
+        matches = whole.count(part)
+        raise ValueError(
+            f"Found {matches} matches of the string to replace. For safety, this tool only supports replacing exactly one occurrence at a time. Add more lines of context to your edit and try again."
+        )
 
     # Try fuzzy matching
     res = replace_closest_edit_distance(whole_lines, part, part_lines, replace_lines)
@@ -572,28 +745,69 @@ def debug_string_comparison(
     return not content_same
 
 
-async def edit_file_content(
-    file_path: str,
-    old_string: str,
-    new_string: str,
+@mcp.tool()
+async def edit_file(
+    path: str,
+    old_string: str | None = None,
+    new_string: str | None = None,
     read_file_timestamps: dict[str, float] | None = None,
-    description: str = "",
-    chat_id: str = None,
+    description: str | None = None,
+    chat_id: str | None = None,
+    commit_hash: str | None = None,
 ) -> str:
-    """Edit a file by replacing old_string with new_string.
+    """This is a tool for editing files. For larger edits, use the WriteFile tool to overwrite files.
+    Provide a short description of the change.
 
-    If the old_string is not found in the file, attempts a fallback mechanism
-    where trailing whitespace is stripped from blank lines (lines with only whitespace)
-    before matching. This helps match files where the only difference is in trailing
-    whitespace on otherwise empty lines.
+    Before using this tool:
+
+    1. Use the ReadFile tool to understand the file's contents and context
+
+    2. Verify the directory path is correct (only applicable when creating new files):
+       - Use the LS tool to verify the parent directory exists and is the correct location
+
+    To make a file edit, provide the following:
+    1. path: The absolute path to the file to modify (must be absolute, not relative)
+    2. old_string: The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)
+    3. new_string: The edited text to replace the old_string
+
+    The tool will replace ONE occurrence of old_string with new_string in the specified file.
+
+    CRITICAL REQUIREMENTS FOR USING THIS TOOL:
+
+    1. UNIQUENESS: The old_string MUST uniquely identify the specific instance you want to change. This means:
+       - Include AT LEAST 3-5 lines of context BEFORE the change point
+       - Include AT LEAST 3-5 lines of context AFTER the change point
+       - Include all whitespace, indentation, and surrounding code exactly as it appears in the file
+
+    2. SINGLE INSTANCE: This tool can only change ONE instance at a time. If you need to change multiple instances:
+       - Make separate calls to this tool for each instance
+       - Each call must uniquely identify its specific instance using extensive context
+
+    3. VERIFICATION: Before using this tool:
+       - Check how many instances of the target text exist in the file
+       - If multiple instances exist, gather enough context to uniquely identify each one
+       - Plan separate tool calls for each instance
+
+    WARNING: If you do not follow these requirements:
+       - The tool will fail if old_string matches multiple locations
+       - The tool will fail if old_string doesn't match exactly (including whitespace)
+       - You may change the wrong instance if you don't include enough context
+
+    When making edits:
+       - Ensure the edit results in idiomatic, correct code
+       - Do not leave the code in a broken state
+       - Always use absolute file paths (starting with /)
+
+    Remember: when making multiple file edits in a row to the same file, you should prefer to send all edits in a single message with multiple calls to this tool, rather than multiple messages with a single call each.
 
     Args:
-        file_path: The absolute path to the file to edit
-        old_string: The text to replace
+        path: The absolute path to the file to edit
+        old_string: The text to replace (use empty string for new file creation)
         new_string: The new text to replace old_string with
         read_file_timestamps: Dictionary mapping file paths to timestamps when they were last read
         description: Short description of the change
         chat_id: The unique ID of the current chat session
+        commit_hash: Optional Git commit hash for version tracking
 
     Returns:
         A success message
@@ -604,14 +818,22 @@ async def edit_file_content(
         Files must be tracked in the git repository before they can be modified.
 
     """
-    # Prevent editing codemcp.toml for security reasons
-    if os.path.basename(file_path) == "codemcp.toml":
-        raise ValueError("Editing codemcp.toml is not allowed for security reasons.")
+    # Set default values
+    old_string = "" if old_string is None else old_string
+    new_string = "" if new_string is None else new_string
+    description = "" if description is None else description
+    chat_id = "" if chat_id is None else chat_id
 
-    # Convert to absolute path if needed
-    full_file_path = (
-        file_path if os.path.isabs(file_path) else os.path.abspath(file_path)
-    )
+    # Normalize the file path
+    full_file_path = normalize_file_path(path)
+
+    # Normalize string inputs to ensure consistent newlines
+    old_string = old_string.replace("\r\n", "\n")
+    new_string = new_string.replace("\r\n", "\n")
+
+    # Prevent editing codemcp.toml for security reasons
+    if os.path.basename(full_file_path) == "codemcp.toml":
+        raise ValueError("Editing codemcp.toml is not allowed for security reasons.")
 
     # Check file path and permissions
     is_valid, error_message = await check_file_path_and_permissions(full_file_path)
@@ -664,7 +886,10 @@ async def edit_file_content(
         else:
             git_message = f"\nFailed to commit changes to git: {message}"
 
-        return f"Successfully created {full_file_path}{git_message}"
+        result = f"Successfully created {full_file_path}{git_message}"
+        # Append commit hash
+        result, _ = await append_commit_hash(result, full_file_path, commit_hash)
+        return result
 
     # Check if file exists
     if not os.path.exists(full_file_path):
@@ -701,36 +926,12 @@ async def edit_file_content(
     # Read the original file
     content = await async_open_text(full_file_path, encoding="utf-8")
 
-    # Check if old_string exists in the file
-    if old_string and old_string not in content:
-        error_msg = "String to replace not found in file."
-        raise ValueError(error_msg)
-
-    # Check for uniqueness of old_string
-    if old_string and content.count(old_string) > 1:
-        # First try to use the dotdotdots approach which handles multiple matches by context
-        try:
-            test_result = try_dotdotdots(content, old_string, new_string)
-            if test_result:
-                # If it worked with dotdotdots, we're good to proceed
-                logger.debug(
-                    "Successfully used dotdotdots strategy to handle multiple occurrences",
-                )
-            else:
-                # Fall back to the original error message
-                matches = content.count(old_string)
-                raise ValueError(
-                    f"Found {matches} matches of the string to replace. For safety, this tool only supports replacing exactly one occurrence at a time. Add more lines of context to your edit and try again."
-                )
-        except ValueError:
-            # If dotdotdots approach failed, give the original error message
-            matches = content.count(old_string)
-            raise ValueError(
-                f"Found {matches} matches of the string to replace. For safety, this tool only supports replacing exactly one occurrence at a time. Add more lines of context to your edit and try again."
-            )
-
     # Apply the edit with advanced matching if needed
-    patch, updated_file = await apply_edit(full_file_path, old_string, new_string)
+    _, updated_file, error = await apply_edit(full_file_path, old_string, new_string)
+
+    # If there was an error during apply_edit, raise it
+    if error:
+        raise ValueError(error)
 
     # If no changes were made (which should never happen at this point),
     # log a warning but continue
@@ -750,6 +951,22 @@ async def edit_file_content(
     if read_file_timestamps is not None:
         read_file_timestamps[full_file_path] = os.stat(full_file_path).st_mtime
 
+    # Try to run the formatter on the file
+    format_message = ""
+    formatter_success, formatter_output = await run_formatter_without_commit(
+        full_file_path
+    )
+    if formatter_success:
+        logger.info(f"Auto-formatted {full_file_path}")
+        if formatter_output.strip():
+            format_message = "\nAuto-formatted the file"
+    else:
+        # Only log warning if there was actually a format command configured but it failed
+        if not "No format command configured" in formatter_output:
+            logger.warning(
+                f"Failed to auto-format {full_file_path}: {formatter_output}"
+            )
+
     # Generate a snippet of the edited file to show in the response
     snippet = get_edit_snippet(content, old_string, new_string)
 
@@ -764,4 +981,8 @@ async def edit_file_content(
     else:
         git_message = f"\n\nFailed to commit changes to git: {message}"
 
-    return f"Successfully edited {full_file_path}\n\nHere's a snippet of the edited file:\n{snippet}{git_message}"
+    result = f"Successfully edited {full_file_path}\n\nHere's a snippet of the edited file:\n{snippet}{format_message}{git_message}"
+
+    # Append commit hash
+    result, _ = await append_commit_hash(result, full_file_path, commit_hash)
+    return result
