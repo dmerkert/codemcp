@@ -44,10 +44,6 @@ dev = [
 [project.scripts]
 codemcp = "codemcp:cli"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [tool.uv]
 
 [tool.ruff]
