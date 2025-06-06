@@ -43,7 +43,7 @@
             if pkgs.stdenv.isDarwin && !config.xdg.enable then
               "Library/Application Support/Claude/claude_desktop_config.json"
             else
-              config.xdg.configHome + "/Claude/claude_desktop_config.json";
+              config.xdg.configHome + "/Claude/claude_desktop_config-old.json";
         in
         {
           options.programs.codemcp = {
@@ -55,7 +55,11 @@
               description = "The package to use for codemcp.";
             };
           };
-          config = {};
+          config = mkIf cfg.enable {
+            home.file.${configFile}.source = cfg.package.passthru.mkClaudeConfigJson {
+              multi = false;
+            };
+          };
         });
       systems = [ "x86_64-linux" "x86_64-darwin" "aarch64-darwin" "aarch64-linux" ];
       perSystem =
