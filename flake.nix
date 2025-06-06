@@ -55,11 +55,7 @@
               description = "The package to use for codemcp.";
             };
           };
-          config = mkIf cfg.enable {
-            home.file.${configFile}.source = cfg.package.passthru.mkClaudeConfigJson {
-              multi = false;
-            };
-          };
+          config = {};
         });
       systems = [ "x86_64-linux" "x86_64-darwin" "aarch64-darwin" "aarch64-linux" ];
       perSystem =
